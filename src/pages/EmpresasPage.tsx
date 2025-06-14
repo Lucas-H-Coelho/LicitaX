@@ -16,46 +16,41 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useLoadingStore } from '@/stores/loadingStore'; // Importa o store de loading
 
 // Reflects structure from public.estabelecimento JOIN public.empresa and related lookups
 interface EmpresaDetalhada {
   // From estabelecimento
-  id_estabelecimento: string; // Assuming cnpj_basico + cnpj_ordem + cnpj_dv can serve as a unique key for display
+  id_estabelecimento: string; 
   cnpj_basico: string;
   cnpj_ordem: string;
   cnpj_dv: string;
   nome_fantasia: string | null;
-  situacao_cadastral: number | null; // Code
-  data_inicio_atividade: number | null; // YYYYMMDD
-  cnae_fiscal_principal: number | null; // Code
+  situacao_cadastral: number | null; 
+  data_inicio_atividade: number | null; 
+  cnae_fiscal_principal: number | null; 
   logradouro: string | null;
   numero: string | null;
   complemento: string | null;
   bairro: string | null;
   cep: string | null;
   uf: string | null;
-  municipio: number | null; // Code
+  municipio: number | null; 
   
-  // From empresa (joined on cnpj_basico)
   empresa_info: {
     razao_social: string | null;
-    natureza_juridica: number | null; // Code
-    porte_empresa: number | null; // Code
+    natureza_juridica: number | null; 
+    porte_empresa: number | null; 
     capital_social: number | null;
   } | null;
 
-  // From cnae (joined on cnae_fiscal_principal)
   cnae_info: {
     descricao: string | null;
   } | null;
 
-  // From munic (joined on municipio)
   municipio_info: {
     descricao: string | null;
   } | null;
-
-  // From an assumed 'created_at' if available, or use data_inicio_atividade as proxy
-  // For this example, we'll rely on data_inicio_atividade for sorting by "date"
 }
 
 interface Cnae {
@@ -68,20 +63,19 @@ interface Municipio {
   descricao: string;
 }
 
-interface PorteEmpresa { // Assuming codes are numbers
+interface PorteEmpresa { 
   codigo: number;
-  descricao: string; // We'll use the code itself if no description table
+  descricao: string; 
 }
 
-interface SituacaoCadastral { // Assuming codes are numbers
+interface SituacaoCadastral { 
   codigo: number;
-  descricao: string; // We'll use the code itself if no description table
+  descricao: string; 
 }
 
 
 const ITEMS_PER_PAGE = 9;
 
-// These would ideally come from lookup tables or an enum/mapping if codes are fixed
 const SITUACAO_CADASTRAL_MAP: { [key: number]: string } = {
   1: 'NULA',
   2: 'ATIVA',
@@ -94,21 +88,22 @@ const PORTE_EMPRESA_MAP: { [key: number]: string } = {
   1: 'NÃO INFORMADO',
   2: 'MICRO EMPRESA',
   3: 'EMPRESA DE PEQUENO PORTE',
-  5: 'DEMAIS', // (Média/Grande)
+  5: 'DEMAIS', 
 };
 
 
 export function EmpresasPage() {
   const [empresas, setEmpresas] = useState<EmpresaDetalhada[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loadingSkeletons, setLoadingSkeletons] = useState(true); // Renomeado para clareza
   const [searchTerm, setSearchTerm] = useState('');
+  const setGlobalLoading = useLoadingStore((state) => state.setLoading); // Hook do store global
   
   const [filters, setFilters] = useState({
-    cnae_fiscal_principal: '', // code
+    cnae_fiscal_principal: '', 
     uf: '',
-    municipio: '', // code
-    porte_empresa: '', // code
-    situacao_cadastral: '', // code
+    municipio: '', 
+    porte_empresa: '', 
+    situacao_cadastral: '', 
   });
   const [dateRangeFundacao, setDateRangeFundacao] = useState<DateRange | undefined>(undefined);
 
@@ -118,7 +113,7 @@ export function EmpresasPage() {
   const [portes, setPortes] = useState<PorteEmpresa[]>([]);
   const [situacoes, setSituacoes] = useState<SituacaoCadastral[]>([]);
 
-  const [sortField, setSortField] = useState('data_inicio_atividade'); // Default sort
+  const [sortField, setSortField] = useState('data_inicio_atividade'); 
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
 
   const [currentPage, setCurrentPage] = useState(1);
@@ -144,163 +139,144 @@ export function EmpresasPage() {
   };
 
   const fetchFilterOptions = useCallback(async () => {
-    // Fetch CNAEs (only those present in 'estabelecimento' for relevance)
-    const { data: cnaesData, error: cnaesError } = await supabase
-      .from('estabelecimento')
-      .select('cnae_fiscal_principal, cnae_info:cnae!inner(codigo, descricao)')
-      .not('cnae_fiscal_principal', 'is', null)
-      .then(response => {
-        if (response.error) return response;
-        // Deduplicate and format
-        const uniqueCnaes = new Map<number, Cnae>();
-        response.data?.forEach(item => {
-          if (item.cnae_fiscal_principal && item.cnae_info && !uniqueCnaes.has(item.cnae_fiscal_principal)) {
-            uniqueCnaes.set(item.cnae_fiscal_principal, { codigo: item.cnae_fiscal_principal, descricao: (item.cnae_info as any).descricao });
-          }
-        });
-        return { data: Array.from(uniqueCnaes.values()).sort((a,b) => a.descricao.localeCompare(b.descricao)), error: null };
-      });
-    if (cnaesError) toast.error('Falha ao carregar CNAEs.');
-    else setCnaes(cnaesData || []);
-
-    // Fetch distinct UFs
-    const { data: ufsData, error: ufsError } = await supabase.rpc('get_distinct_column_values', { p_table_name: 'estabelecimento', p_column_name: 'uf' });
-    if (ufsError) toast.error('Falha ao carregar UFs.');
-    else setUfs(ufsData?.filter((u: string | null) => u).sort() || []);
-    
-    // Fetch Municipios (only those present in 'estabelecimento')
-    const { data: municipiosData, error: municipiosError } = await supabase
-      .from('estabelecimento')
-      .select('municipio, municipio_info:munic!inner(codigo, descricao)')
-      .not('municipio', 'is', null)
-       .then(response => {
-        if (response.error) return response;
-        const uniqueMunicipios = new Map<number, Municipio>();
-        response.data?.forEach(item => {
-          if (item.municipio && item.municipio_info && !uniqueMunicipios.has(item.municipio)) {
-            uniqueMunicipios.set(item.municipio, { codigo: item.municipio, descricao: (item.municipio_info as any).descricao });
-          }
-        });
-        return { data: Array.from(uniqueMunicipios.values()).sort((a,b) => a.descricao.localeCompare(b.descricao)), error: null };
-      });
-    if (municipiosError) toast.error('Falha ao carregar municípios.');
-    else setMunicipios(municipiosData || []);
-
-    // Fetch distinct Porte Empresa from 'empresa' table
-     const { data: portesData, error: portesError } = await supabase
-      .from('empresa')
-      .select('porte_empresa')
-      .not('porte_empresa', 'is', null)
-      .then(response => {
-        if (response.error) return response;
-        const distinctPortes = Array.from(new Set(response.data?.map(p => p.porte_empresa).filter(p => p !== null))) as number[];
-        return { 
-          data: distinctPortes.map(code => ({ codigo: code, descricao: PORTE_EMPRESA_MAP[code] || `Porte ${code}` })).sort((a,b) => a.descricao.localeCompare(b.descricao)), 
-          error: null 
-        };
-      });
-    if (portesError) toast.error('Falha ao carregar portes de empresa.');
-    else setPortes(portesData || []);
-
-    // Fetch distinct Situacao Cadastral from 'estabelecimento'
-    const { data: situacoesData, error: situacoesError } = await supabase
-      .from('estabelecimento')
-      .select('situacao_cadastral')
-      .not('situacao_cadastral', 'is', null)
-      .then(response => {
-        if (response.error) return response;
-        const distinctSituacoes = Array.from(new Set(response.data?.map(s => s.situacao_cadastral).filter(s => s !== null))) as number[];
-        return { 
-          data: distinctSituacoes.map(code => ({ codigo: code, descricao: SITUACAO_CADASTRAL_MAP[code] || `Situação ${code}` })).sort((a,b) => a.descricao.localeCompare(b.descricao)), 
-          error: null 
-        };
-      });
-    if (situacoesError) toast.error('Falha ao carregar situações cadastrais.');
-    else setSituacoes(situacoesData || []);
-
-  }, []);
+    setGlobalLoading(true);
+    try {
+      const [cnaesRes, ufsRes, municipiosRes, portesRes, situacoesRes] = await Promise.all([
+        supabase
+          .from('estabelecimento')
+          .select('cnae_fiscal_principal, cnae_info:cnae!inner(codigo, descricao)')
+          .not('cnae_fiscal_principal', 'is', null)
+          .then(response => {
+            if (response.error) throw response.error;
+            const uniqueCnaes = new Map<number, Cnae>();
+            response.data?.forEach(item => {
+              if (item.cnae_fiscal_principal && item.cnae_info && !uniqueCnaes.has(item.cnae_fiscal_principal)) {
+                uniqueCnaes.set(item.cnae_fiscal_principal, { codigo: item.cnae_fiscal_principal, descricao: (item.cnae_info as any).descricao });
+              }
+            });
+            return Array.from(uniqueCnaes.values()).sort((a,b) => a.descricao.localeCompare(b.descricao));
+          }),
+        supabase.rpc('get_distinct_column_values', { p_table_name: 'estabelecimento', p_column_name: 'uf' })
+          .then(response => {
+            if (response.error) throw response.error;
+            return response.data?.filter((u: string | null) => u).sort() || [];
+          }),
+        supabase
+          .from('estabelecimento')
+          .select('municipio, municipio_info:munic!inner(codigo, descricao)')
+          .not('municipio', 'is', null)
+          .then(response => {
+            if (response.error) throw response.error;
+            const uniqueMunicipios = new Map<number, Municipio>();
+            response.data?.forEach(item => {
+              if (item.municipio && item.municipio_info && !uniqueMunicipios.has(item.municipio)) {
+                uniqueMunicipios.set(item.municipio, { codigo: item.municipio, descricao: (item.municipio_info as any).descricao });
+              }
+            });
+            return Array.from(uniqueMunicipios.values()).sort((a,b) => a.descricao.localeCompare(b.descricao));
+          }),
+        supabase
+          .from('empresa')
+          .select('porte_empresa')
+          .not('porte_empresa', 'is', null)
+          .then(response => {
+            if (response.error) throw response.error;
+            const distinctPortes = Array.from(new Set(response.data?.map(p => p.porte_empresa).filter(p => p !== null))) as number[];
+            return distinctPortes.map(code => ({ codigo: code, descricao: PORTE_EMPRESA_MAP[code] || `Porte ${code}` })).sort((a,b) => a.descricao.localeCompare(b.descricao));
+          }),
+        supabase
+          .from('estabelecimento')
+          .select('situacao_cadastral')
+          .not('situacao_cadastral', 'is', null)
+          .then(response => {
+            if (response.error) throw response.error;
+            const distinctSituacoes = Array.from(new Set(response.data?.map(s => s.situacao_cadastral).filter(s => s !== null))) as number[];
+            return distinctSituacoes.map(code => ({ codigo: code, descricao: SITUACAO_CADASTRAL_MAP[code] || `Situação ${code}` })).sort((a,b) => a.descricao.localeCompare(b.descricao));
+          })
+      ]);
+      setCnaes(cnaesRes);
+      setUfs(ufsRes);
+      setMunicipios(municipiosRes);
+      setPortes(portesRes);
+      setSituacoes(situacoesRes);
+    } catch (error: any) {
+      console.error('Falha ao carregar opções de filtro:', error);
+      toast.error(`Falha ao carregar opções de filtro: ${error.message}`);
+    } finally {
+      setGlobalLoading(false);
+    }
+  }, [setGlobalLoading]);
 
   const fetchEmpresas = useCallback(async () => {
-    setLoading(true);
-    let query = supabase
-      .from('estabelecimento')
-      .select(`
-        cnpj_basico, 
-        cnpj_ordem, 
-        cnpj_dv, 
-        nome_fantasia, 
-        situacao_cadastral, 
-        data_inicio_atividade, 
-        cnae_fiscal_principal, 
-        logradouro, 
-        numero, 
-        complemento, 
-        bairro, 
-        cep, 
-        uf, 
-        municipio,
-        empresa_info:empresa!inner(razao_social, natureza_juridica, porte_empresa, capital_social),
-        cnae_info:cnae(codigo, descricao),
-        municipio_info:munic(codigo, descricao)
-      `, { count: 'exact' });
+    setGlobalLoading(true);
+    setLoadingSkeletons(true);
+    try {
+      let query = supabase
+        .from('estabelecimento')
+        .select(`
+          cnpj_basico, cnpj_ordem, cnpj_dv, nome_fantasia, situacao_cadastral, data_inicio_atividade, 
+          cnae_fiscal_principal, logradouro, numero, complemento, bairro, cep, uf, municipio,
+          empresa_info:empresa!inner(razao_social, natureza_juridica, porte_empresa, capital_social),
+          cnae_info:cnae(codigo, descricao),
+          municipio_info:munic(codigo, descricao)
+        `, { count: 'exact' });
 
-    // Text Search: Razão Social (from empresa), Nome Fantasia (from estabelecimento), CNPJ (basico from estabelecimento)
-    if (searchTerm) {
-      const searchLower = `%${searchTerm.toLowerCase()}%`;
-      query = query.or(
-        `nome_fantasia.ilike.${searchLower},empresa_info.razao_social.ilike.${searchLower},cnpj_basico.ilike.${searchTerm.replace(/\D/g, '')}%`
-      );
-    }
-    
-    // Filters
-    if (filters.cnae_fiscal_principal) query = query.eq('cnae_fiscal_principal', parseInt(filters.cnae_fiscal_principal));
-    if (filters.uf) query = query.eq('uf', filters.uf);
-    if (filters.municipio) query = query.eq('municipio', parseInt(filters.municipio));
-    if (filters.porte_empresa) query = query.eq('empresa_info.porte_empresa', parseInt(filters.porte_empresa));
-    if (filters.situacao_cadastral) query = query.eq('situacao_cadastral', parseInt(filters.situacao_cadastral));
-    
-    if (dateRangeFundacao?.from) {
-      const dateFromStr = format(dateRangeFundacao.from, 'yyyyMMdd');
-      query = query.gte('data_inicio_atividade', parseInt(dateFromStr));
-    }
-    if (dateRangeFundacao?.to) {
-      const dateToStr = format(dateRangeFundacao.to, 'yyyyMMdd');
-      query = query.lte('data_inicio_atividade', parseInt(dateToStr));
-    }
-    
-    // Sorting
-    // For joined fields, Supabase syntax is 'foreignTable.column'
-    const sortColumn = sortField.startsWith('empresa_info.') ? sortField : sortField;
-    query = query.order(sortColumn, { 
-        ascending: sortOrder === 'asc', 
-        nullsFirst: false,
-        foreignTable: sortField.includes('.') ? sortField.split('.')[0] : undefined
-    });
+      if (searchTerm) {
+        const searchLower = `%${searchTerm.toLowerCase()}%`;
+        query = query.or(
+          `nome_fantasia.ilike.${searchLower},empresa_info.razao_social.ilike.${searchLower},cnpj_basico.ilike.${searchTerm.replace(/\D/g, '')}%`
+        );
+      }
+      
+      if (filters.cnae_fiscal_principal) query = query.eq('cnae_fiscal_principal', parseInt(filters.cnae_fiscal_principal));
+      if (filters.uf) query = query.eq('uf', filters.uf);
+      if (filters.municipio) query = query.eq('municipio', parseInt(filters.municipio));
+      if (filters.porte_empresa) query = query.eq('empresa_info.porte_empresa', parseInt(filters.porte_empresa));
+      if (filters.situacao_cadastral) query = query.eq('situacao_cadastral', parseInt(filters.situacao_cadastral));
+      
+      if (dateRangeFundacao?.from) {
+        query = query.gte('data_inicio_atividade', parseInt(format(dateRangeFundacao.from, 'yyyyMMdd')));
+      }
+      if (dateRangeFundacao?.to) {
+        query = query.lte('data_inicio_atividade', parseInt(format(dateRangeFundacao.to, 'yyyyMMdd')));
+      }
+      
+      const sortColumn = sortField.startsWith('empresa_info.') ? sortField : sortField;
+      query = query.order(sortColumn, { 
+          ascending: sortOrder === 'asc', 
+          nullsFirst: false,
+          foreignTable: sortField.includes('.') ? sortField.split('.')[0] : undefined
+      });
 
+      const from = (currentPage - 1) * ITEMS_PER_PAGE;
+      const to = from + ITEMS_PER_PAGE - 1;
+      query = query.range(from, to);
 
-    // Pagination
-    const from = (currentPage - 1) * ITEMS_PER_PAGE;
-    const to = from + ITEMS_PER_PAGE - 1;
-    query = query.range(from, to);
+      const { data, error, count } = await query;
 
-    const { data, error, count } = await query;
-
-    if (error) {
-      console.error('Erro ao buscar empresas:', error);
-      toast.error(`Falha ao carregar empresas: ${error.message}`);
+      if (error) {
+        console.error('Erro ao buscar empresas:', error);
+        toast.error(`Falha ao carregar empresas: ${error.message}`);
+        setEmpresas([]);
+      } else {
+        const mappedData = data?.map(d => ({
+          ...d,
+          id_estabelecimento: `${d.cnpj_basico}-${d.cnpj_ordem}-${d.cnpj_dv}`,
+          empresa_info: d.empresa_info ? d.empresa_info[0] || d.empresa_info : null,
+        })) as EmpresaDetalhada[] || [];
+        setEmpresas(mappedData);
+        setTotalCount(count || 0);
+      }
+    } catch (err: any) {
+      console.error('Erro inesperado ao buscar empresas:', err);
+      toast.error(`Falha inesperada ao carregar empresas: ${err.message}`);
       setEmpresas([]);
-    } else {
-      // Map data to EmpresaDetalhada interface
-      const mappedData = data?.map(d => ({
-        ...d,
-        id_estabelecimento: `${d.cnpj_basico}-${d.cnpj_ordem}-${d.cnpj_dv}`, // Create a unique ID for list keys
-        empresa_info: d.empresa_info ? d.empresa_info[0] || d.empresa_info : null, // Handle potential array from join
-      })) as EmpresaDetalhada[] || [];
-      setEmpresas(mappedData);
-      setTotalCount(count || 0);
+      setTotalCount(0);
+    } finally {
+      setLoadingSkeletons(false);
+      setGlobalLoading(false);
     }
-    setLoading(false);
-  }, [searchTerm, filters, sortField, sortOrder, currentPage, dateRangeFundacao]);
+  }, [searchTerm, filters, sortField, sortOrder, currentPage, dateRangeFundacao, setGlobalLoading]);
 
   useEffect(() => {
     fetchFilterOptions();
@@ -310,7 +286,6 @@ export function EmpresasPage() {
     fetchEmpresas();
   }, [fetchEmpresas]);
 
-  // Ensure RPC function for distinct values exists (from previous implementation, still useful)
   useEffect(() => {
     const createRpcFunction = async () => {
       await supabase.rpc('sql', {
@@ -340,11 +315,7 @@ export function EmpresasPage() {
 
   const clearFilters = () => {
     setFilters({
-      cnae_fiscal_principal: '',
-      uf: '',
-      municipio: '',
-      porte_empresa: '',
-      situacao_cadastral: '',
+      cnae_fiscal_principal: '', uf: '', municipio: '', porte_empresa: '', situacao_cadastral: '',
     });
     setDateRangeFundacao(undefined);
     setSearchTerm('');
@@ -379,7 +350,7 @@ export function EmpresasPage() {
         <h1 className="text-3xl font-bold tracking-tight flex items-center">
           <Building2 className="mr-3 h-8 w-8" /> Empresas
         </h1>
-        <Button onClick={() => navigate('/empresas/nova')}>
+        <Button onClick={() => navigate('/empresas/nova')}> {/* TODO: Implementar rota de nova empresa */}
           <PlusCircle className="mr-2 h-4 w-4" /> Adicionar Empresa
         </Button>
       </div>
@@ -472,7 +443,7 @@ export function EmpresasPage() {
 
       <div className="flex justify-between items-center mb-4">
         <p className="text-sm text-muted-foreground">
-          {totalCount > 0 ? `${totalCount} empresa(s) encontrada(s)` : loading ? 'Buscando...' : 'Nenhuma empresa encontrada'}
+          {totalCount > 0 ? `${totalCount} empresa(s) encontrada(s)` : loadingSkeletons ? 'Buscando...' : 'Nenhuma empresa encontrada'}
         </p>
         <div className="flex items-center gap-2">
           <span className="text-sm text-muted-foreground">Ordenar por:</span>
@@ -500,7 +471,7 @@ export function EmpresasPage() {
         </div>
       </div>
 
-      {loading ? (
+      {loadingSkeletons ? (
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">{renderSkeletonCards()}</div>
       ) : empresas.length === 0 ? (
         <Card>
@@ -566,7 +537,7 @@ export function EmpresasPage() {
                 )}
               </CardContent>
               <CardFooter>
-                <Button className="w-full" variant="outline" onClick={() => navigate(`/empresas/${est.id_estabelecimento}`)}> {/* TODO: Implementar rota de detalhe */}
+                <Button className="w-full" variant="outline" onClick={() => navigate(`/empresas/${est.id_estabelecimento}`)}>
                   <ExternalLink className="mr-2 h-4 w-4" /> Ver Detalhes
                 </Button>
               </CardFooter>
@@ -581,7 +552,7 @@ export function EmpresasPage() {
             variant="outline"
             size="sm"
             onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-            disabled={currentPage === 1 || loading}
+            disabled={currentPage === 1 || loadingSkeletons}
           >
             <ChevronLeft className="h-4 w-4 mr-1" /> Anterior
           </Button>
@@ -592,7 +563,7 @@ export function EmpresasPage() {
             variant="outline"
             size="sm"
             onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-            disabled={currentPage === totalPages || loading}
+            disabled={currentPage === totalPages || loadingSkeletons}
           >
             Próxima <ChevronRight className="h-4 w-4 ml-1" />
           </Button>

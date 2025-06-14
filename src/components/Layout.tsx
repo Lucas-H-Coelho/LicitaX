@@ -1,5 +1,5 @@
 import { Link, Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { Home, LogOut, User, Briefcase, Moon, Sun, Settings, Menu, X, Building2 } from 'lucide-react'; // Added Building2 for Empresas
+import { Home, LogOut, User, Briefcase, Moon, Sun, Settings, Menu, X, Building2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/lib/supabaseClient';
 import { useTheme } from '@/hooks/use-theme';
@@ -15,6 +15,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Sheet, SheetContent, SheetTrigger, SheetClose } from '@/components/ui/sheet';
 import { useEffect, useState } from 'react';
 import { Session } from '@supabase/supabase-js';
+import { ApiStatusIndicator } from './ApiStatusIndicator'; // Importa o novo componente
 
 export function Layout() {
   const navigate = useNavigate();
@@ -53,7 +54,7 @@ export function Layout() {
   const navLinks = [
     { to: "/dashboard", label: "Dashboard", icon: <Home className="mr-2 h-4 w-4" /> },
     { to: "/licitacoes", label: "Licitações", icon: <Briefcase className="mr-2 h-4 w-4" /> },
-    { to: "/empresas", label: "Empresas", icon: <Building2 className="mr-2 h-4 w-4" /> }, // Added Empresas link
+    { to: "/empresas", label: "Empresas", icon: <Building2 className="mr-2 h-4 w-4" /> },
   ];
 
   return (
@@ -127,6 +128,7 @@ export function Layout() {
         </div>
         
         <div className="flex items-center gap-2 sm:gap-4">
+          <ApiStatusIndicator /> {/* Adiciona o indicador de status da API aqui */}
           <Button
             variant="outline"
             size="icon"
