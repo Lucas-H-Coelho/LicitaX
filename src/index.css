@@ -2,14 +2,17 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Base :root styles from Vite template, providing fallbacks and initial settings */
 :root {
   font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;
   font-weight: 400;
 
   color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
+  /* Default text and background colors, primarily for non-Tailwind contexts or initial paint.
+     Tailwind's theme system (@apply bg-background text-foreground) will override these. */
+  color: rgba(255, 255, 255, 0.87); /* Default dark mode text */
+  background-color: #242424; /* Default dark mode background */
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -17,64 +20,86 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-a:hover {
-  color: #535bf2;
+html {
+  /* Ensure html element can serve as a 100% height reference for body */
+  height: 100%;
 }
 
 body {
-  margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
+  margin: 0; /* Standard reset */
+  height: 100%; /* Make body fill the html height, allowing #root to also use 100% height */
+  min-width: 320px; /* Minimum viewport width for basic responsiveness */
+  /* `display: flex;` and `place-items: center;` from default Vite template are removed
+     as they are for centering single content, not for a full application shell. */
 }
 
+#root {
+  /* Ensure the React root div takes up full height of the body.
+     This allows the main Layout component (with min-h-screen) to correctly fill the viewport. */
+  height: 100%;
+  width: 100%; /* Ensure root takes full width */
+  /* display: flex; and flex-direction: column; could be added if #root itself needs to be a flex container,
+     but typically the top-level React component (App/Layout) manages its own internal flex layout. */
+}
+
+/* General anchor styles - can be customized further or overridden by utility classes */
+a {
+  font-weight: 500;
+  color: #646cff; /* Consider using themed colors: hsl(var(--primary)) */
+  text-decoration: inherit;
+}
+a:hover {
+  color: #535bf2; /* Consider using themed colors */
+}
+
+/* Default h1 styles from Vite template */
 h1 {
   font-size: 3.2em;
   line-height: 1.1;
 }
 
-button {
+/* Default button styles from Vite template.
+   Added :not([class*="..."]) to avoid overriding Shadcn/UI buttons which are styled with utility classes. */
+button:not([class*="bg-"]):not([class*="border-"]):not([class*="ring-offset-background"]) {
   border-radius: 8px;
   border: 1px solid transparent;
   padding: 0.6em 1.2em;
   font-size: 1em;
   font-weight: 500;
   font-family: inherit;
-  background-color: #1a1a1a;
+  background-color: #1a1a1a; /* Default dark mode button */
   cursor: pointer;
   transition: border-color 0.25s;
 }
-button:hover {
+button:not([class*="bg-"]):not([class*="border-"]):not([class*="ring-offset-background"]):hover {
   border-color: #646cff;
 }
-button:focus,
-button:focus-visible {
+button:not([class*="bg-"]):not([class*="border-"]):not([class*="ring-offset-background"]):focus,
+button:not([class*="bg-"]):not([class*="border-"]):not([class*="ring-offset-background"]):focus-visible {
   outline: 4px auto -webkit-focus-ring-color;
 }
 
+/* Light theme specific overrides from Vite template, for non-Tailwind/Shadcn elements */
 @media (prefers-color-scheme: light) {
   :root {
-    color: #213547;
-    background-color: #ffffff;
+    color: #213547; /* Default light mode text */
+    background-color: #ffffff; /* Default light mode background */
   }
   a:hover {
     color: #747bff;
   }
-  button {
-    background-color: #f9f9f9;
+  button:not([class*="bg-"]):not([class*="border-"]):not([class*="ring-offset-background"]) {
+    background-color: #f9f9f9; /* Default light mode button */
   }
 }
 
+/* Shadcn/UI theme variables and Tailwind base layer application */
+/* IMPORTANT: These @layer base definitions should be after the initial :root, html, body, #root styles
+   to ensure Tailwind's base styles and theme variables are correctly applied. */
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 0 0% 3.9%;
+    --background: 0 0% 100%; /* Light theme background */
+    --foreground: 0 0% 3.9%; /* Light theme foreground */
     --card: 0 0% 100%;
     --card-foreground: 0 0% 3.9%;
     --popover: 0 0% 100%;
@@ -91,7 +116,7 @@ button:focus-visible {
     --destructive-foreground: 0 0% 98%;
     --border: 0 0% 89.8%;
     --input: 0 0% 89.8%;
-    --ring: 0 0% 3.9%;
+    --ring: 0 0% 3.9%; /* Ring color for light theme */
     --chart-1: 12 76% 61%;
     --chart-2: 173 58% 39%;
     --chart-3: 197 37% 24%;
@@ -99,9 +124,10 @@ button:focus-visible {
     --chart-5: 27 87% 67%;
     --radius: 0.5rem;
   }
+
   .dark {
-    --background: 0 0% 3.9%;
-    --foreground: 0 0% 98%;
+    --background: 0 0% 3.9%; /* Dark theme background */
+    --foreground: 0 0% 98%; /* Dark theme foreground */
     --card: 0 0% 3.9%;
     --card-foreground: 0 0% 98%;
     --popover: 0 0% 3.9%;
@@ -114,11 +140,11 @@ button:focus-visible {
     --muted-foreground: 0 0% 63.9%;
     --accent: 0 0% 14.9%;
     --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 30.6%;
+    --destructive: 0 62.8% 30.6%; /* Adjusted for better contrast on dark */
     --destructive-foreground: 0 0% 98%;
     --border: 0 0% 14.9%;
     --input: 0 0% 14.9%;
-    --ring: 0 0% 83.1%;
+    --ring: 0 0% 83.1%; /* Ring color for dark theme */
     --chart-1: 220 70% 50%;
     --chart-2: 160 60% 45%;
     --chart-3: 30 80% 55%;
@@ -129,9 +155,10 @@ button:focus-visible {
 
 @layer base {
   * {
-    @apply border-border;
+    @apply border-border; /* Applies border color from theme variables */
+    /* box-sizing: border-box; is applied by Tailwind's preflight */
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground; /* Applies themed background and text color */
   }
 }
