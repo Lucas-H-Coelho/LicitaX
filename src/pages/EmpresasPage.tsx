@@ -7,121 +7,276 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
 import { DateRange } from 'react-day-picker';
-import { format } from 'date-fns';
+import { format, parse } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { toast } from 'sonner';
 import { 
   Search, Filter, ExternalLink, Building2, Tag, MapPin, Briefcase, CalendarDays, Users, Activity, 
-  ListOrdered, ArrowUpDown, ChevronLeft, ChevronRight, PlusCircle, Trash2
+  ChevronLeft, ChevronRight, PlusCircle, Trash2, Info
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { Skeleton } from '@/components/ui/skeleton';
 
-interface Empresa {
-  id: string;
+// Reflects structure from public.estabelecimento JOIN public.empresa and related lookups
+interface EmpresaDetalhada {
+  // From estabelecimento
+  id_estabelecimento: string; // Assuming cnpj_basico + cnpj_ordem + cnpj_dv can serve as a unique key for display
+  cnpj_basico: string;
+  cnpj_ordem: string;
+  cnpj_dv: string;
   nome_fantasia: string | null;
-  razao_social: string;
-  cnpj: string;
-  area_de_atuacao_principal: string | null;
-  tags_descritivas: string[] | null;
-  setor_atuacao_id: string | null;
-  setores_atuacao: { nome: string } | null; // For joined data
-  estado: string | null;
-  cidade: string | null;
-  porte_empresa: string | null;
-  data_fundacao: string | null; // ISO string
-  status_empresa: string;
-  created_at: string; // ISO string
+  situacao_cadastral: number | null; // Code
+  data_inicio_atividade: number | null; // YYYYMMDD
+  cnae_fiscal_principal: number | null; // Code
+  logradouro: string | null;
+  numero: string | null;
+  complemento: string | null;
+  bairro: string | null;
+  cep: string | null;
+  uf: string | null;
+  municipio: number | null; // Code
+  
+  // From empresa (joined on cnpj_basico)
+  empresa_info: {
+    razao_social: string | null;
+    natureza_juridica: number | null; // Code
+    porte_empresa: number | null; // Code
+    capital_social: number | null;
+  } | null;
+
+  // From cnae (joined on cnae_fiscal_principal)
+  cnae_info: {
+    descricao: string | null;
+  } | null;
+
+  // From munic (joined on municipio)
+  municipio_info: {
+    descricao: string | null;
+  } | null;
+
+  // From an assumed 'created_at' if available, or use data_inicio_atividade as proxy
+  // For this example, we'll rely on data_inicio_atividade for sorting by "date"
 }
 
-interface SetorAtuacao {
-  id: string;
-  nome: string;
+interface Cnae {
+  codigo: number;
+  descricao: string;
 }
+
+interface Municipio {
+  codigo: number;
+  descricao: string;
+}
+
+interface PorteEmpresa { // Assuming codes are numbers
+  codigo: number;
+  descricao: string; // We'll use the code itself if no description table
+}
+
+interface SituacaoCadastral { // Assuming codes are numbers
+  codigo: number;
+  descricao: string; // We'll use the code itself if no description table
+}
+
 
 const ITEMS_PER_PAGE = 9;
-const PORTE_EMPRESA_OPTIONS = ['Pequena', 'Média', 'Grande', 'Microempresa', 'Empresa de Pequeno Porte'];
-const STATUS_EMPRESA_OPTIONS = ['Ativa', 'Inativa', 'Em Liquidação', 'Suspensa'];
+
+// These would ideally come from lookup tables or an enum/mapping if codes are fixed
+const SITUACAO_CADASTRAL_MAP: { [key: number]: string } = {
+  1: 'NULA',
+  2: 'ATIVA',
+  3: 'SUSPENSA',
+  4: 'INAPTA',
+  8: 'BAIXADA',
+};
+
+const PORTE_EMPRESA_MAP: { [key: number]: string } = {
+  1: 'NÃO INFORMADO',
+  2: 'MICRO EMPRESA',
+  3: 'EMPRESA DE PEQUENO PORTE',
+  5: 'DEMAIS', // (Média/Grande)
+};
+
 
 export function EmpresasPage() {
-  const [empresas, setEmpresas] = useState<Empresa[]>([]);
+  const [empresas, setEmpresas] = useState<EmpresaDetalhada[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   
-  // Filters
   const [filters, setFilters] = useState({
-    setor_atuacao_id: '',
-    estado: '',
-    cidade: '',
-    porte_empresa: '',
-    status_empresa: '',
-    data_fundacao_inicio: '',
-    data_fundacao_fim: '',
+    cnae_fiscal_principal: '', // code
+    uf: '',
+    municipio: '', // code
+    porte_empresa: '', // code
+    situacao_cadastral: '', // code
   });
-  const [dateRange, setDateRange] = useState<DateRange | undefined>(undefined);
+  const [dateRangeFundacao, setDateRangeFundacao] = useState<DateRange | undefined>(undefined);
 
-  // Filter options
-  const [setores, setSetores] = useState<SetorAtuacao[]>([]);
-  const [estados, setEstados] = useState<string[]>([]);
-  const [cidades, setCidades] = useState<string[]>([]);
+  const [cnaes, setCnaes] = useState<Cnae[]>([]);
+  const [ufs, setUfs] = useState<string[]>([]);
+  const [municipios, setMunicipios] = useState<Municipio[]>([]);
+  const [portes, setPortes] = useState<PorteEmpresa[]>([]);
+  const [situacoes, setSituacoes] = useState<SituacaoCadastral[]>([]);
 
-  // Sorting
-  const [sortField, setSortField] = useState('created_at');
+  const [sortField, setSortField] = useState('data_inicio_atividade'); // Default sort
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
 
-  // Pagination
   const [currentPage, setCurrentPage] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
 
   const navigate = useNavigate();
 
-  const fetchFilterOptions = useCallback(async () => {
-    // Fetch Setores
-    const { data: setoresData, error: setoresError } = await supabase
-      .from('setores_atuacao')
-      .select('id, nome')
-      .order('nome', { ascending: true });
-    if (setoresError) toast.error('Falha ao carregar setores.');
-    else setSetores(setoresData || []);
+  const formatCnpj = (basico: string, ordem: string, dv: string) => {
+    if (!basico || !ordem || !dv) return 'N/A';
+    return `${basico.padStart(8, '0').replace(/^(\d{2})(\d{3})(\d{3})$/, '$1.$2.$3/')}${ordem.padStart(4, '0')}-${dv.padStart(2, '0')}`;
+  };
+  
+  const formatDateFromInt = (dateInt: number | null | undefined): string => {
+    if (!dateInt) return 'N/A';
+    const dateStr = dateInt.toString();
+    if (dateStr.length !== 8) return 'Data Inválida';
+    try {
+      const parsedDate = parse(dateStr, 'yyyyMMdd', new Date());
+      return format(parsedDate, 'dd/MM/yyyy', { locale: ptBR });
+    } catch {
+      return 'Data Inválida';
+    }
+  };
 
-    // Fetch distinct Estados (consider performance for very large datasets)
-    const { data: estadosData, error: estadosError } = await supabase
-      .rpc('get_distinct_column_values', { p_table_name: 'empresas', p_column_name: 'estado' });
-    if (estadosError) toast.error('Falha ao carregar estados.');
-    else setEstados(estadosData?.filter((e: string | null) => e) || []);
+  const fetchFilterOptions = useCallback(async () => {
+    // Fetch CNAEs (only those present in 'estabelecimento' for relevance)
+    const { data: cnaesData, error: cnaesError } = await supabase
+      .from('estabelecimento')
+      .select('cnae_fiscal_principal, cnae_info:cnae!inner(codigo, descricao)')
+      .not('cnae_fiscal_principal', 'is', null)
+      .then(response => {
+        if (response.error) return response;
+        // Deduplicate and format
+        const uniqueCnaes = new Map<number, Cnae>();
+        response.data?.forEach(item => {
+          if (item.cnae_fiscal_principal && item.cnae_info && !uniqueCnaes.has(item.cnae_fiscal_principal)) {
+            uniqueCnaes.set(item.cnae_fiscal_principal, { codigo: item.cnae_fiscal_principal, descricao: (item.cnae_info as any).descricao });
+          }
+        });
+        return { data: Array.from(uniqueCnaes.values()).sort((a,b) => a.descricao.localeCompare(b.descricao)), error: null };
+      });
+    if (cnaesError) toast.error('Falha ao carregar CNAEs.');
+    else setCnaes(cnaesData || []);
+
+    // Fetch distinct UFs
+    const { data: ufsData, error: ufsError } = await supabase.rpc('get_distinct_column_values', { p_table_name: 'estabelecimento', p_column_name: 'uf' });
+    if (ufsError) toast.error('Falha ao carregar UFs.');
+    else setUfs(ufsData?.filter((u: string | null) => u).sort() || []);
     
-    // Fetch distinct Cidades (consider performance)
-    const { data: cidadesData, error: cidadesError } = await supabase
-      .rpc('get_distinct_column_values', { p_table_name: 'empresas', p_column_name: 'cidade' });
-    if (cidadesError) toast.error('Falha ao carregar cidades.');
-    else setCidades(cidadesData?.filter((c: string | null) => c) || []);
+    // Fetch Municipios (only those present in 'estabelecimento')
+    const { data: municipiosData, error: municipiosError } = await supabase
+      .from('estabelecimento')
+      .select('municipio, municipio_info:munic!inner(codigo, descricao)')
+      .not('municipio', 'is', null)
+       .then(response => {
+        if (response.error) return response;
+        const uniqueMunicipios = new Map<number, Municipio>();
+        response.data?.forEach(item => {
+          if (item.municipio && item.municipio_info && !uniqueMunicipios.has(item.municipio)) {
+            uniqueMunicipios.set(item.municipio, { codigo: item.municipio, descricao: (item.municipio_info as any).descricao });
+          }
+        });
+        return { data: Array.from(uniqueMunicipios.values()).sort((a,b) => a.descricao.localeCompare(b.descricao)), error: null };
+      });
+    if (municipiosError) toast.error('Falha ao carregar municípios.');
+    else setMunicipios(municipiosData || []);
+
+    // Fetch distinct Porte Empresa from 'empresa' table
+     const { data: portesData, error: portesError } = await supabase
+      .from('empresa')
+      .select('porte_empresa')
+      .not('porte_empresa', 'is', null)
+      .then(response => {
+        if (response.error) return response;
+        const distinctPortes = Array.from(new Set(response.data?.map(p => p.porte_empresa).filter(p => p !== null))) as number[];
+        return { 
+          data: distinctPortes.map(code => ({ codigo: code, descricao: PORTE_EMPRESA_MAP[code] || `Porte ${code}` })).sort((a,b) => a.descricao.localeCompare(b.descricao)), 
+          error: null 
+        };
+      });
+    if (portesError) toast.error('Falha ao carregar portes de empresa.');
+    else setPortes(portesData || []);
+
+    // Fetch distinct Situacao Cadastral from 'estabelecimento'
+    const { data: situacoesData, error: situacoesError } = await supabase
+      .from('estabelecimento')
+      .select('situacao_cadastral')
+      .not('situacao_cadastral', 'is', null)
+      .then(response => {
+        if (response.error) return response;
+        const distinctSituacoes = Array.from(new Set(response.data?.map(s => s.situacao_cadastral).filter(s => s !== null))) as number[];
+        return { 
+          data: distinctSituacoes.map(code => ({ codigo: code, descricao: SITUACAO_CADASTRAL_MAP[code] || `Situação ${code}` })).sort((a,b) => a.descricao.localeCompare(b.descricao)), 
+          error: null 
+        };
+      });
+    if (situacoesError) toast.error('Falha ao carregar situações cadastrais.');
+    else setSituacoes(situacoesData || []);
 
   }, []);
 
   const fetchEmpresas = useCallback(async () => {
     setLoading(true);
     let query = supabase
-      .from('empresas')
-      .select('*, setores_atuacao(nome)', { count: 'exact' });
+      .from('estabelecimento')
+      .select(`
+        cnpj_basico, 
+        cnpj_ordem, 
+        cnpj_dv, 
+        nome_fantasia, 
+        situacao_cadastral, 
+        data_inicio_atividade, 
+        cnae_fiscal_principal, 
+        logradouro, 
+        numero, 
+        complemento, 
+        bairro, 
+        cep, 
+        uf, 
+        municipio,
+        empresa_info:empresa!inner(razao_social, natureza_juridica, porte_empresa, capital_social),
+        cnae_info:cnae(codigo, descricao),
+        municipio_info:munic(codigo, descricao)
+      `, { count: 'exact' });
 
-    // Text Search
+    // Text Search: Razão Social (from empresa), Nome Fantasia (from estabelecimento), CNPJ (basico from estabelecimento)
     if (searchTerm) {
-      const searchLower = searchTerm.toLowerCase();
+      const searchLower = `%${searchTerm.toLowerCase()}%`;
       query = query.or(
-        `nome_fantasia.ilike.%${searchLower}%,razao_social.ilike.%${searchLower}%,cnpj.ilike.%${searchLower}%,area_de_atuacao_principal.ilike.%${searchLower}%,tags_descritivas.cs.{${searchLower}}`
+        `nome_fantasia.ilike.${searchLower},empresa_info.razao_social.ilike.${searchLower},cnpj_basico.ilike.${searchTerm.replace(/\D/g, '')}%`
       );
     }
-
+    
     // Filters
-    if (filters.setor_atuacao_id) query = query.eq('setor_atuacao_id', filters.setor_atuacao_id);
-    if (filters.estado) query = query.eq('estado', filters.estado);
-    if (filters.cidade) query = query.eq('cidade', filters.cidade);
-    if (filters.porte_empresa) query = query.eq('porte_empresa', filters.porte_empresa);
-    if (filters.status_empresa) query = query.eq('status_empresa', filters.status_empresa);
-    if (dateRange?.from) query = query.gte('data_fundacao', format(dateRange.from, 'yyyy-MM-dd'));
-    if (dateRange?.to) query = query.lte('data_fundacao', format(dateRange.to, 'yyyy-MM-dd'));
+    if (filters.cnae_fiscal_principal) query = query.eq('cnae_fiscal_principal', parseInt(filters.cnae_fiscal_principal));
+    if (filters.uf) query = query.eq('uf', filters.uf);
+    if (filters.municipio) query = query.eq('municipio', parseInt(filters.municipio));
+    if (filters.porte_empresa) query = query.eq('empresa_info.porte_empresa', parseInt(filters.porte_empresa));
+    if (filters.situacao_cadastral) query = query.eq('situacao_cadastral', parseInt(filters.situacao_cadastral));
+    
+    if (dateRangeFundacao?.from) {
+      const dateFromStr = format(dateRangeFundacao.from, 'yyyyMMdd');
+      query = query.gte('data_inicio_atividade', parseInt(dateFromStr));
+    }
+    if (dateRangeFundacao?.to) {
+      const dateToStr = format(dateRangeFundacao.to, 'yyyyMMdd');
+      query = query.lte('data_inicio_atividade', parseInt(dateToStr));
+    }
     
     // Sorting
-    query = query.order(sortField, { ascending: sortOrder === 'asc' });
+    // For joined fields, Supabase syntax is 'foreignTable.column'
+    const sortColumn = sortField.startsWith('empresa_info.') ? sortField : sortField;
+    query = query.order(sortColumn, { 
+        ascending: sortOrder === 'asc', 
+        nullsFirst: false,
+        foreignTable: sortField.includes('.') ? sortField.split('.')[0] : undefined
+    });
+
 
     // Pagination
     const from = (currentPage - 1) * ITEMS_PER_PAGE;
@@ -132,14 +287,20 @@ export function EmpresasPage() {
 
     if (error) {
       console.error('Erro ao buscar empresas:', error);
-      toast.error("Falha ao carregar empresas.");
+      toast.error(`Falha ao carregar empresas: ${error.message}`);
       setEmpresas([]);
     } else {
-      setEmpresas(data as Empresa[]);
+      // Map data to EmpresaDetalhada interface
+      const mappedData = data?.map(d => ({
+        ...d,
+        id_estabelecimento: `${d.cnpj_basico}-${d.cnpj_ordem}-${d.cnpj_dv}`, // Create a unique ID for list keys
+        empresa_info: d.empresa_info ? d.empresa_info[0] || d.empresa_info : null, // Handle potential array from join
+      })) as EmpresaDetalhada[] || [];
+      setEmpresas(mappedData);
       setTotalCount(count || 0);
     }
     setLoading(false);
-  }, [searchTerm, filters, sortField, sortOrder, currentPage, dateRange]);
+  }, [searchTerm, filters, sortField, sortOrder, currentPage, dateRangeFundacao]);
 
   useEffect(() => {
     fetchFilterOptions();
@@ -149,7 +310,7 @@ export function EmpresasPage() {
     fetchEmpresas();
   }, [fetchEmpresas]);
 
-  // Helper function to create RPC for distinct values if not exists
+  // Ensure RPC function for distinct values exists (from previous implementation, still useful)
   useEffect(() => {
     const createRpcFunction = async () => {
       await supabase.rpc('sql', {
@@ -157,11 +318,11 @@ export function EmpresasPage() {
         CREATE OR REPLACE FUNCTION get_distinct_column_values(p_table_name TEXT, p_column_name TEXT)
         RETURNS SETOF TEXT AS $$
         BEGIN
-            RETURN QUERY EXECUTE format('SELECT DISTINCT %I FROM %I WHERE %I IS NOT NULL ORDER BY 1', p_column_name, p_table_name, p_column_name);
+            RETURN QUERY EXECUTE format('SELECT DISTINCT %I::text FROM %I WHERE %I IS NOT NULL ORDER BY 1', p_column_name, p_table_name, p_column_name);
         END;
         $$ LANGUAGE plpgsql;
         `
-      }).catch(console.warn); // Ignore if exists or permission issues, handle in UI
+      }).catch(err => console.warn("Failed to create/update RPC 'get_distinct_column_values', it might already exist or there are permission issues:", err.message));
     };
     createRpcFunction();
   }, []);
@@ -173,36 +334,44 @@ export function EmpresasPage() {
   };
 
   const handleDateRangeChange = (selectedRange: DateRange | undefined) => {
-    setDateRange(selectedRange);
+    setDateRangeFundacao(selectedRange);
     setCurrentPage(1);
   }
 
   const clearFilters = () => {
     setFilters({
-      setor_atuacao_id: '',
-      estado: '',
-      cidade: '',
+      cnae_fiscal_principal: '',
+      uf: '',
+      municipio: '',
       porte_empresa: '',
-      status_empresa: '',
-      data_fundacao_inicio: '',
-      data_fundacao_fim: '',
+      situacao_cadastral: '',
     });
-    setDateRange(undefined);
+    setDateRangeFundacao(undefined);
     setSearchTerm('');
     setCurrentPage(1);
   };
 
-  const handleSort = (field: string) => {
-    if (field === sortField) {
-      setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortField(field);
-      setSortOrder('asc');
-    }
-    setCurrentPage(1);
-  };
-
   const totalPages = Math.ceil(totalCount / ITEMS_PER_PAGE);
+
+  const renderSkeletonCards = () => (
+    Array.from({ length: ITEMS_PER_PAGE }).map((_, index) => (
+      <Card key={`skeleton-${index}`} className="flex flex-col">
+        <CardHeader>
+          <Skeleton className="h-6 w-3/4 mb-2" />
+          <Skeleton className="h-4 w-1/2" />
+        </CardHeader>
+        <CardContent className="flex-grow space-y-2 text-sm">
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-5/6" />
+          <Skeleton className="h-4 w-4/5" />
+          <Skeleton className="h-4 w-2/3" />
+        </CardContent>
+        <CardFooter>
+          <Skeleton className="h-10 w-full" />
+        </CardFooter>
+      </Card>
+    ))
+  );
 
   return (
     <div className="space-y-6">
@@ -210,7 +379,7 @@ export function EmpresasPage() {
         <h1 className="text-3xl font-bold tracking-tight flex items-center">
           <Building2 className="mr-3 h-8 w-8" /> Empresas
         </h1>
-        <Button onClick={() => navigate('/empresas/nova')}> {/* TODO: Implementar rota de nova empresa */}
+        <Button onClick={() => navigate('/empresas/nova')}>
           <PlusCircle className="mr-2 h-4 w-4" /> Adicionar Empresa
         </Button>
       </div>
@@ -224,67 +393,67 @@ export function EmpresasPage() {
           <div className="relative">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Buscar por Nome, Razão Social, CNPJ, Área de Atuação, Tags..."
+              placeholder="Buscar por Razão Social, Nome Fantasia, CNPJ..."
               value={searchTerm}
               onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
               className="pl-8 w-full"
             />
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-            <Select value={filters.setor_atuacao_id} onValueChange={(v) => handleFilterChange('setor_atuacao_id', v)}>
-              <SelectTrigger><SelectValue placeholder="Setor de Atuação" /></SelectTrigger>
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+            <Select value={filters.cnae_fiscal_principal} onValueChange={(v) => handleFilterChange('cnae_fiscal_principal', v)}>
+              <SelectTrigger><SelectValue placeholder="CNAE Principal" /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="">Todos Setores</SelectItem>
-                {setores.map(s => <SelectItem key={s.id} value={s.id}>{s.nome}</SelectItem>)}
+                <SelectItem value="">Todos CNAEs</SelectItem>
+                {cnaes.map(c => <SelectItem key={c.codigo} value={c.codigo.toString()}>{c.descricao} ({c.codigo})</SelectItem>)}
               </SelectContent>
             </Select>
-            <Select value={filters.estado} onValueChange={(v) => handleFilterChange('estado', v)}>
-              <SelectTrigger><SelectValue placeholder="Estado" /></SelectTrigger>
+            <Select value={filters.uf} onValueChange={(v) => handleFilterChange('uf', v)}>
+              <SelectTrigger><SelectValue placeholder="UF" /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="">Todos Estados</SelectItem>
-                {estados.map(e => <SelectItem key={e} value={e}>{e}</SelectItem>)}
+                <SelectItem value="">Todas UFs</SelectItem>
+                {ufs.map(u => <SelectItem key={u} value={u}>{u}</SelectItem>)}
               </SelectContent>
             </Select>
-            <Select value={filters.cidade} onValueChange={(v) => handleFilterChange('cidade', v)}>
-              <SelectTrigger><SelectValue placeholder="Cidade" /></SelectTrigger>
+            <Select value={filters.municipio} onValueChange={(v) => handleFilterChange('municipio', v)}>
+              <SelectTrigger><SelectValue placeholder="Município" /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="">Todas Cidades</SelectItem>
-                {cidades.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                <SelectItem value="">Todos Municípios</SelectItem>
+                {municipios.map(m => <SelectItem key={m.codigo} value={m.codigo.toString()}>{m.descricao} ({m.codigo})</SelectItem>)}
               </SelectContent>
             </Select>
             <Select value={filters.porte_empresa} onValueChange={(v) => handleFilterChange('porte_empresa', v)}>
               <SelectTrigger><SelectValue placeholder="Porte da Empresa" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="">Todos Portes</SelectItem>
-                {PORTE_EMPRESA_OPTIONS.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+                {portes.map(p => <SelectItem key={p.codigo} value={p.codigo.toString()}>{p.descricao}</SelectItem>)}
               </SelectContent>
             </Select>
-            <Select value={filters.status_empresa} onValueChange={(v) => handleFilterChange('status_empresa', v)}>
-              <SelectTrigger><SelectValue placeholder="Status da Empresa" /></SelectTrigger>
+            <Select value={filters.situacao_cadastral} onValueChange={(v) => handleFilterChange('situacao_cadastral', v)}>
+              <SelectTrigger><SelectValue placeholder="Situação Cadastral" /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="">Todos Status</SelectItem>
-                {STATUS_EMPRESA_OPTIONS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                <SelectItem value="">Todas Situações</SelectItem>
+                {situacoes.map(s => <SelectItem key={s.codigo} value={s.codigo.toString()}>{s.descricao}</SelectItem>)}
               </SelectContent>
             </Select>
             <Popover>
               <PopoverTrigger asChild>
                 <Button variant="outline" className="w-full justify-start text-left font-normal">
                   <CalendarDays className="mr-2 h-4 w-4" />
-                  {dateRange?.from ? (
-                    dateRange.to ? (
-                      `${format(dateRange.from, "dd/MM/yy", { locale: ptBR })} - ${format(dateRange.to, "dd/MM/yy", { locale: ptBR })}`
+                  {dateRangeFundacao?.from ? (
+                    dateRangeFundacao.to ? (
+                      `${format(dateRangeFundacao.from, "dd/MM/yy", { locale: ptBR })} - ${format(dateRangeFundacao.to, "dd/MM/yy", { locale: ptBR })}`
                     ) : (
-                      format(dateRange.from, "dd/MM/yyyy", { locale: ptBR })
+                      format(dateRangeFundacao.from, "dd/MM/yyyy", { locale: ptBR })
                     )
                   ) : (
-                    <span>Data de Fundação</span>
+                    <span>Data de Início Atividade</span>
                   )}
                 </Button>
               </PopoverTrigger>
               <PopoverContent className="w-auto p-0" align="start">
                 <Calendar
                   mode="range"
-                  selected={dateRange}
+                  selected={dateRangeFundacao}
                   onSelect={handleDateRangeChange}
                   locale={ptBR}
                   initialFocus
@@ -303,7 +472,7 @@ export function EmpresasPage() {
 
       <div className="flex justify-between items-center mb-4">
         <p className="text-sm text-muted-foreground">
-          {totalCount > 0 ? `${totalCount} empresa(s) encontrada(s)` : 'Nenhuma empresa encontrada'}
+          {totalCount > 0 ? `${totalCount} empresa(s) encontrada(s)` : loading ? 'Buscando...' : 'Nenhuma empresa encontrada'}
         </p>
         <div className="flex items-center gap-2">
           <span className="text-sm text-muted-foreground">Ordenar por:</span>
@@ -316,84 +485,88 @@ export function EmpresasPage() {
               setCurrentPage(1);
             }}
           >
-            <SelectTrigger className="w-[180px]">
+            <SelectTrigger className="w-[220px]">
               <SelectValue placeholder="Ordenar por" />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value="empresa_info.razao_social-asc">Razão Social (A-Z)</SelectItem>
+              <SelectItem value="empresa_info.razao_social-desc">Razão Social (Z-A)</SelectItem>
               <SelectItem value="nome_fantasia-asc">Nome Fantasia (A-Z)</SelectItem>
               <SelectItem value="nome_fantasia-desc">Nome Fantasia (Z-A)</SelectItem>
-              <SelectItem value="created_at-desc">Data Cadastro (Mais Recente)</SelectItem>
-              <SelectItem value="created_at-asc">Data Cadastro (Mais Antiga)</SelectItem>
-              <SelectItem value="data_fundacao-desc">Data Fundação (Mais Recente)</SelectItem>
-              <SelectItem value="data_fundacao-asc">Data Fundação (Mais Antiga)</SelectItem>
+              <SelectItem value="data_inicio_atividade-desc">Início Atividade (Mais Recente)</SelectItem>
+              <SelectItem value="data_inicio_atividade-asc">Início Atividade (Mais Antiga)</SelectItem>
             </SelectContent>
           </Select>
         </div>
       </div>
 
       {loading ? (
-        <p className="text-center py-10">Carregando empresas...</p>
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">{renderSkeletonCards()}</div>
       ) : empresas.length === 0 ? (
         <Card>
           <CardContent className="pt-6 text-center text-muted-foreground">
-            Nenhuma empresa encontrada com os filtros aplicados.
+            <Info className="mx-auto h-12 w-12 text-gray-400 mb-4" />
+            <p className="text-lg font-medium">Nenhuma empresa encontrada.</p>
+            <p className="text-sm">Tente ajustar seus filtros ou termos de busca.</p>
           </CardContent>
         </Card>
       ) : (
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {empresas.map((empresa) => (
-            <Card key={empresa.id} className="flex flex-col">
+          {empresas.map((est) => (
+            <Card key={est.id_estabelecimento} className="flex flex-col">
               <CardHeader>
                 <div className="flex justify-between items-start">
-                  <CardTitle className="text-lg leading-tight">{empresa.nome_fantasia || empresa.razao_social}</CardTitle>
-                  <span className={`px-2 py-0.5 text-xs rounded-full whitespace-nowrap ${
-                    empresa.status_empresa === 'Ativa' ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' : 
-                    empresa.status_empresa === 'Inativa' ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200' :
-                    'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200' // Default for other statuses
-                  }`}>
-                    {empresa.status_empresa}
-                  </span>
+                  <CardTitle className="text-lg leading-tight">{est.nome_fantasia || est.empresa_info?.razao_social || 'Nome não disponível'}</CardTitle>
+                  {est.situacao_cadastral && (
+                    <span className={`px-2 py-0.5 text-xs rounded-full whitespace-nowrap ${
+                      est.situacao_cadastral === 2 ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' : 
+                      est.situacao_cadastral === 8 ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200' :
+                      'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'
+                    }`}>
+                      {SITUACAO_CADASTRAL_MAP[est.situacao_cadastral] || `Situação ${est.situacao_cadastral}`}
+                    </span>
+                  )}
                 </div>
                 <CardDescription className="text-sm pt-1">
-                  CNPJ: {empresa.cnpj}
+                  CNPJ: {formatCnpj(est.cnpj_basico, est.cnpj_ordem, est.cnpj_dv)}
                 </CardDescription>
+                {est.empresa_info?.razao_social && est.nome_fantasia && est.empresa_info.razao_social !== est.nome_fantasia && (
+                   <CardDescription className="text-xs pt-0.5 text-muted-foreground">
+                     Razão Social: {est.empresa_info.razao_social}
+                   </CardDescription>
+                )}
               </CardHeader>
               <CardContent className="flex-grow space-y-2 text-sm">
-                {empresa.setores_atuacao?.nome && (
+                {est.cnae_info?.descricao && (
                   <div className="flex items-center text-muted-foreground">
-                    <Briefcase className="mr-1.5 h-4 w-4" /> Setor: {empresa.setores_atuacao.nome}
+                    <Briefcase className="mr-1.5 h-4 w-4 flex-shrink-0" /> Setor: {est.cnae_info.descricao}
                   </div>
                 )}
-                {(empresa.cidade || empresa.estado) && (
+                {(est.municipio_info?.descricao || est.uf) && (
                   <div className="flex items-center text-muted-foreground">
-                    <MapPin className="mr-1.5 h-4 w-4" /> 
-                    {empresa.cidade}{empresa.cidade && empresa.estado ? ', ' : ''}{empresa.estado}
+                    <MapPin className="mr-1.5 h-4 w-4 flex-shrink-0" /> 
+                    {est.municipio_info?.descricao}{est.municipio_info?.descricao && est.uf ? ', ' : ''}{est.uf}
                   </div>
                 )}
-                {empresa.porte_empresa && (
+                {est.empresa_info?.porte_empresa && (
                   <div className="flex items-center text-muted-foreground">
-                    <Users className="mr-1.5 h-4 w-4" /> Porte: {empresa.porte_empresa}
+                    <Users className="mr-1.5 h-4 w-4 flex-shrink-0" /> Porte: {PORTE_EMPRESA_MAP[est.empresa_info.porte_empresa] || `Porte ${est.empresa_info.porte_empresa}`}
                   </div>
                 )}
-                {empresa.data_fundacao && (
+                {est.data_inicio_atividade && (
                   <div className="flex items-center text-muted-foreground">
-                    <CalendarDays className="mr-1.5 h-4 w-4" /> Fundação: {new Date(empresa.data_fundacao).toLocaleDateString('pt-BR', { timeZone: 'UTC' })}
+                    <CalendarDays className="mr-1.5 h-4 w-4 flex-shrink-0" /> Início Ativ.: {formatDateFromInt(est.data_inicio_atividade)}
                   </div>
                 )}
-                {empresa.tags_descritivas && empresa.tags_descritivas.length > 0 && (
+                 {est.logradouro && (
                   <div className="flex items-start text-muted-foreground">
-                    <Tag className="mr-1.5 h-4 w-4 mt-0.5 shrink-0" /> 
-                    <div className="flex flex-wrap gap-1">
-                      {empresa.tags_descritivas.slice(0, 3).map(tag => (
-                        <span key={tag} className="px-1.5 py-0.5 text-xs bg-muted rounded">{tag}</span>
-                      ))}
-                      {empresa.tags_descritivas.length > 3 && <span className="text-xs text-muted-foreground self-center">...</span>}
-                    </div>
+                     <MapPin className="mr-1.5 h-4 w-4 mt-0.5 flex-shrink-0" /> 
+                     <span>{est.logradouro}, {est.numero || 'S/N'}{est.complemento ? ` - ${est.complemento}` : ''} - {est.bairro || 'Bairro não informado'}</span>
                   </div>
                 )}
               </CardContent>
               <CardFooter>
-                <Button className="w-full" variant="outline" onClick={() => navigate(`/empresas/${empresa.id}`)}> {/* TODO: Implementar rota de detalhe */}
+                <Button className="w-full" variant="outline" onClick={() => navigate(`/empresas/${est.id_estabelecimento}`)}> {/* TODO: Implementar rota de detalhe */}
                   <ExternalLink className="mr-2 h-4 w-4" /> Ver Detalhes
                 </Button>
               </CardFooter>
