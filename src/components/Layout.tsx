@@ -1,5 +1,5 @@
-import { Link, Outlet, useNavigate } from 'react-router-dom';
-import { Home, LogOut, User, Briefcase, Moon, Sun, Settings, Menu, X } from 'lucide-react'; // Added Menu, X
+import { Link, Outlet, useNavigate, useLocation } from 'react-router-dom';
+import { Home, LogOut, User, Briefcase, Moon, Sun, Settings, Menu, X, Building2 } from 'lucide-react'; // Added Building2 for Empresas
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/lib/supabaseClient';
 import { useTheme } from '@/hooks/use-theme';
@@ -12,12 +12,13 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Sheet, SheetContent, SheetTrigger, SheetClose } from '@/components/ui/sheet'; // Added Sheet components
+import { Sheet, SheetContent, SheetTrigger, SheetClose } from '@/components/ui/sheet';
 import { useEffect, useState } from 'react';
 import { Session } from '@supabase/supabase-js';
 
 export function Layout() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { theme, setTheme } = useTheme();
   const [session, setSession] = useState<Session | null>(null);
   const [userInitial, setUserInitial] = useState<string>('U');
@@ -52,6 +53,7 @@ export function Layout() {
   const navLinks = [
     { to: "/dashboard", label: "Dashboard", icon: <Home className="mr-2 h-4 w-4" /> },
     { to: "/licitacoes", label: "Licitações", icon: <Briefcase className="mr-2 h-4 w-4" /> },
+    { to: "/empresas", label: "Empresas", icon: <Building2 className="mr-2 h-4 w-4" /> }, // Added Empresas link
   ];
 
   return (
@@ -70,13 +72,9 @@ export function Layout() {
             <Link
               key={link.to}
               to={link.to}
-              className="text-muted-foreground transition-colors hover:text-foreground data-[active=true]:text-foreground data-[active=true]:font-semibold"
-              // Basic active state, can be improved with NavLink from react-router-dom if needed
-              onClick={(e) => {
-                // Example of setting active state, better handled by NavLink
-                document.querySelectorAll('nav a').forEach(a => a.setAttribute('data-active', 'false'));
-                e.currentTarget.setAttribute('data-active', 'true');
-              }}
+              className={`transition-colors hover:text-foreground ${
+                location.pathname.startsWith(link.to) ? 'text-foreground font-semibold' : 'text-muted-foreground'
+              }`}
             >
               {link.label}
             </Link>
@@ -97,7 +95,7 @@ export function Layout() {
                 <nav className="grid gap-6 text-lg font-medium p-6">
                   <Link
                     to="/"
-                    className="group flex h-10 w-10 shrink-0 items-center justify-center gap-2 rounded-full bg-primary text-lg font-semibold text-primary-foreground md:text-base"
+                    className="group flex h-10 w-10 shrink-0 items-center justify-center gap-2 rounded-full bg-primary text-lg font-semibold text-primary-foreground md:text-base mb-4"
                   >
                     <Briefcase className="h-5 w-5 transition-all group-hover:scale-110" />
                     <span className="sr-only">LicitaX</span>
@@ -106,7 +104,9 @@ export function Layout() {
                     <SheetClose asChild key={link.to}>
                       <Link
                         to={link.to}
-                        className="flex items-center gap-4 px-2.5 text-muted-foreground hover:text-foreground"
+                        className={`flex items-center gap-4 px-2.5 hover:text-foreground ${
+                          location.pathname.startsWith(link.to) ? 'text-foreground font-medium' : 'text-muted-foreground'
+                        }`}
                       >
                         {link.icon}
                         {link.label}

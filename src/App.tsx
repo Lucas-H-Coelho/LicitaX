@@ -5,6 +5,7 @@ import { SignupPage } from './pages/SignupPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { LicitacoesPage } from './pages/LicitacoesPage';
 import { LicitacaoDetailPage } from './pages/LicitacaoDetailPage';
+import { EmpresasPage } from './pages/EmpresasPage'; // Importa a nova página
 import { ProfilePage } from './pages/ProfilePage';
 import { SettingsPage } from './pages/SettingsPage';
 import { NotFoundPage } from './pages/NotFoundPage';
@@ -59,6 +60,7 @@ function App() {
             <Route path="/dashboard" element={session ? <DashboardPage /> : <Navigate to="/login" />} />
             <Route path="/licitacoes" element={session ? <LicitacoesPage /> : <Navigate to="/login" />} />
             <Route path="/licitacoes/:id" element={session ? <LicitacaoDetailPage /> : <Navigate to="/login" />} />
+            <Route path="/empresas" element={session ? <EmpresasPage /> : <Navigate to="/login" />} /> {/* Adiciona a rota para Empresas */}
             <Route path="/profile" element={session ? <ProfilePage /> : <Navigate to="/login" />} />
             <Route path="/settings" element={session ? <SettingsPage /> : <Navigate to="/login" />} />
             
